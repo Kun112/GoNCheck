@@ -2,83 +2,154 @@ package com.example.vuquang.goncheck;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Dialog;
+import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
-import android.location.Criteria;
+import android.location.Address;
+import android.location.Geocoder;
 import android.location.Location;
+import android.location.LocationListener;
 import android.location.LocationManager;
-import android.os.Environment;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.Bundle;
+import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.view.MenuItemCompat;
 import android.support.v7.app.AppCompatActivity;
-import android.text.Html;
 import android.util.Log;
 import android.graphics.*;
 import android.widget.*;
 import android.view.*;
 
+import com.example.directionlibrary.DirectionCallback;
+import com.example.directionlibrary.GoogleDirection;
+import com.example.directionlibrary.constant.TransportMode;
+import com.example.directionlibrary.model.Direction;
+import com.example.directionlibrary.util.DirectionConverter;
 import com.example.library.SlidingUpPanelLayout;
 import com.example.library.SlidingUpPanelLayout.PanelSlideListener;
 import com.example.library.SlidingUpPanelLayout.PanelState;
 
 
+import com.example.vuquang.goncheck.DAO.CheckedPlaceDAO;
+import com.example.vuquang.goncheck.model.CheckedPlace;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesNotAvailableException;
+import com.google.android.gms.common.GooglePlayServicesRepairableException;
+import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.common.api.Status;
+import com.google.android.gms.location.places.AutocompleteFilter;
 import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.ui.PlaceAutocomplete;
 import com.google.android.gms.location.places.ui.PlaceAutocompleteFragment;
 import com.google.android.gms.location.places.ui.PlaceSelectionListener;
 import com.google.android.gms.maps.*;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.Polyline;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Random;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
-import static com.example.vuquang.goncheck.R.id.map;
+import io.realm.Realm;
 
-public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback {
-    private static final String TAG = "DemoActivity";
+public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback,DirectionCallback{
+    private static final String TAG = "GoNCheck";
+
+    private static final int PLACE_AUTOCOMPLETE_REQUEST_CODE = 1889;
     private static final int CAMERA_REQUEST = 1888;
     private static final int S_WIDTH = 120;
     private static final int S_HEIGHT = 120;
     private static final int B_WIDTH = 600;
     private static final int B_HEIGHT = 600;
-    public static final String pathAlbum = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES) + "/" + "GoNCheck/";
 
-    String[] items = {"VietNam", "ThaiLand", "Laos"};
-    SearchView txtSearchValue;
+    public static final int LOCATION_UPDATE_MIN_DISTANCE = 10;
+    public static final int LOCATION_UPDATE_MIN_TIME = 5000;
+    public static final int MY_PERMISSION_LOCATION = 1000 ;
+    private static final int MY_PERMISSION_LOCATION2 = 1001;
+
+    //Spinner items
+    List<String> itemsShort;
+    List<String> itemsLong;
+
+    //Get map
+    private GoogleMap mMap;
+    LocationManager locationManager;
+
+    //Get addr from Latit and Longit
+    Geocoder geocoder;
+
+    //save current place
+    String curPlace;
+    Address curAddr;
+
+    //last location
+    Location lastLocation;
+    //Manage Db
+    CheckedPlaceDAO checkedPlaceDAO;
 
     private SlidingUpPanelLayout mLayout;
-
-    private GoogleMap mMap;
-    public
     ViewGroup scrollViewgroup;
-    ImageView icon;
+    TextView textNamePlace;
     ImageView imageSelected;
-    Button location;
     //Small image
     Bitmap[] thumbnails = null;
+    CameraAction cameraAction;
+
+    //Direction
+    private LatLng origin;
+    private LatLng destination;
+    Polyline polyline;
+
+    private final LocationListener locationListener = new LocationListener() {
+        public void onLocationChanged(Location location) {
+            locationManager.removeUpdates(locationListener);
+
+        }
+
+        public void onProviderDisabled(String provider){
+            locationManager.removeUpdates(locationListener);
+        }
+
+        public void onProviderEnabled(String provider){ }
+        public void onStatusChanged(String provider, int status,Bundle extras){ }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        this.requestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.activity_maps);
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
-                .findFragmentById(map);
+                .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
+        geocoder = new Geocoder(this, Locale.ENGLISH);
+        //Create realm db
+        Realm.init(this);
+        checkedPlaceDAO = new CheckedPlaceDAO();
+        cameraAction = new CameraAction(curPlace,curAddr,checkedPlaceDAO);
+
+        //Add PlaceAutoComplete
         PlaceAutocompleteFragment autocompleteFragment = (PlaceAutocompleteFragment)
                 getFragmentManager().findFragmentById(R.id.place_autocomplete_fragment);
-
+        AutocompleteFilter typeFilter = new AutocompleteFilter.Builder()
+                .setCountry("VN")
+                .build();
+        autocompleteFragment.setFilter(typeFilter);
         autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
             @Override
             public void onPlaceSelected(Place place) {
@@ -93,21 +164,13 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             }
         });
 
-        imageSelected = (ImageView) findViewById(R.id.imageSelected);
+        textNamePlace = (TextView) findViewById(R.id.name);
 
-        scrollViewgroup = (ViewGroup) findViewById(R.id.viewgroup);
+        imageSelected = (ImageView) findViewById(R.id. imageSelected);
 
-        //load images to thumbails and largeimgae
-        loadPic();
-        loadSlidePanel();
+        scrollViewgroup = (ViewGroup) findViewById(R.id. viewgroup);
+
         mLayout = (SlidingUpPanelLayout) findViewById(R.id.sliding_layout);
-        location = (Button)findViewById(R.id.buttonlocation);
-        location.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                TuiDangODau();
-            }
-        });
         mLayout.addPanelSlideListener(new PanelSlideListener() {
             @Override
             public void onPanelSlide(View panel, float slideOffset) {
@@ -126,33 +189,22 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             }
         });
 
-        TextView t = (TextView) findViewById(R.id.name);
-        t.setText(Html.fromHtml(getString(R.string.position)));
-//        Button f = (Button) findViewById(R.id.follow);
-//        f.setText(Html.fromHtml(getString(R.string.follow)));
-//        f.setMovementMethod(LinkMovementMethod.getInstance());
-//        f.setOnClickListener(new View.OnClickListener() {
-//            @Override
-//            public void onClick(View v) {
-//                Intent i = new Intent(Intent.ACTION_VIEW);
-//                i.setData(Uri.parse("http://www.twitter.com/umanoapp"));
-//                startActivity(i);
-//            }
-//        });
     }
 
-    private void loadSlidePanel() {
+    private void loadSlidePanel(){
         if (thumbnails != null) {
+            scrollViewgroup.removeAllViews();
+
+            //Set big view for first image
+            if(thumbnails[0] != null)
+            showLargeImage(0);
 
             for (int i = 0; i < thumbnails.length; i++) {
-                //create single frames [icon & caption] using XML inflater
+                //create single frames [icon] using XML inflater
                 final View singleFrame = getLayoutInflater().inflate(
                         R.layout.frame_icon_scroll_view, null);
-                //frame: 0, frame: 1, frame: 2, ... and so on
                 singleFrame.setId(i);
-                //internal plumbing to reach elements inside single frame
                 ImageView icon = (ImageView) singleFrame.findViewById(R.id.icon);
-                //put data [icon, caption] in each frame
                 icon.setImageBitmap(Bitmap.createScaledBitmap(thumbnails[i], S_WIDTH, S_HEIGHT, false));
                 //add frame to the scrollView
                 scrollViewgroup.addView(singleFrame);
@@ -168,10 +220,49 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
     //display a high-quality version of the image selected using thumbnails
-    protected void showLargeImage(int frameId) {
+    protected void showLargeImage(final int frameId) {
         Drawable selectedLargeImage = new BitmapDrawable(getResources(),
                 Bitmap.createScaledBitmap(thumbnails[frameId], B_WIDTH, B_HEIGHT, false));
         imageSelected.setBackground(selectedLargeImage);
+        imageSelected.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                showImageOnDialog(frameId);
+                return false;
+            }
+        });
+    }
+
+    public void showImageOnDialog(int id) {
+        Dialog builder = new Dialog(this);
+        builder.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        builder.getWindow().setBackgroundDrawable(
+                new ColorDrawable(android.graphics.Color.TRANSPARENT));
+        builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialogInterface) {
+                //nothing;
+            }
+        });
+
+        Bitmap image = thumbnails[id];
+        ImageView imageView = new ImageView(this);
+
+        if(image.getHeight() < image.getWidth()) {
+            Matrix matrix = new Matrix();
+            matrix.postRotate(90f);
+            image = Bitmap.createBitmap(image , 0, 0,
+                    image.getWidth(),
+                    image.getHeight(),
+                    matrix,
+                    true);
+        }
+
+        imageView.setImageBitmap(image);
+        builder.addContentView(imageView, new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        builder.show();
     }
 
 
@@ -186,97 +277,121 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
      */
     @Override
     public void onMapReady(GoogleMap googleMap) {
+        Snackbar.make(textNamePlace,"Loading map...", Snackbar.LENGTH_SHORT).show();
         mMap = googleMap;
+        int googlePlayStatus = GooglePlayServicesUtil.isGooglePlayServicesAvailable(this);
+        if (googlePlayStatus != ConnectionResult.SUCCESS) {
+            GooglePlayServicesUtil.getErrorDialog(googlePlayStatus, this, -1).show();
+            finish();
+        } else {
+            if (mMap != null) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                        && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    // no network provider is enabled
 
-        // Add a marker in Sydney and move the camera
-        TuiDangODau();
+                } else {
+                    mMap.setMyLocationEnabled(true);
+                    mMap.setOnMyLocationButtonClickListener(new GoogleMap.OnMyLocationButtonClickListener() {
+                        @Override
+                        public boolean onMyLocationButtonClick() {
+                            getLocation();
+                            return true;
+                        }
+                    });
+                }
 
-
+                mMap.getUiSettings().setMyLocationButtonEnabled(true);
+                mMap.getUiSettings().setAllGesturesEnabled(true);
+            }
+        }
+        //click marker event
+        mMap.setOnMarkerClickListener(new GoogleMap.OnMarkerClickListener() {
+            @Override
+            public boolean onMarkerClick(Marker marker) {
+                String title = marker.getTitle();
+                textNamePlace.setText(title);
+                if(checkedPlaceDAO.getCheckedPlace(title)!= null) {
+                    loadPic(checkedPlaceDAO.getCheckedPlace(title).getId());
+                    loadSlidePanel();
+                }
+                marker.showInfoWindow();
+                //set des to marker
+                destination = marker.getPosition();
+                return true;
+            }
+        });
+        loadListPlaceMarked();
+        getLocation();
     }
 
-    private void TuiDangODau() {
-
-        LocationManager locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
-        Criteria criteria = new Criteria();
-
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-            return;
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           String[] permissions, int[] grantResults) {
+        if (requestCode == MY_PERMISSION_LOCATION
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            getLocation();
         }
-        Location lastLocation = locationManager.getLastKnownLocation(locationManager.getBestProvider(criteria, false));
-        if (lastLocation != null)
-        {
-            LatLng latLng=new LatLng(lastLocation.getLatitude(), lastLocation.getLongitude());
-            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 13));
-
-            CameraPosition cameraPosition = new CameraPosition.Builder()
-                    .target(latLng)      // Sets the center of the map to location user
-                    .zoom(15)                   // Sets the zoom
-                    .bearing(90)                // Sets the orientation of the camera to east
-                    .tilt(40)                   // Sets the tilt of the camera to 30 degrees
-                    .build();                   // Creates a CameraPosition from the builder
-            mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
-//Thêm MarketOption cho Map:
-            MarkerOptions option=new MarkerOptions();
-            option.title("Chỗ Tui đang ngồi đó");
-            option.snippet("Gần làng SOS");
-            option.position(latLng);
-            Marker currentMarker= mMap.addMarker(option);
-            currentMarker.showInfoWindow();
+        else{
+            Toast.makeText(this, "Failed!", Toast.LENGTH_SHORT).show();
         }
+    }
+
+
+    //Load items
+    private void loadItemsForSpinner(Spinner spinner){
+        List<CheckedPlace> listPlace = checkedPlaceDAO.getAllCheckedPlace();
+        itemsLong = new ArrayList<>();
+        itemsShort = new ArrayList<>();
+        for(CheckedPlace place:listPlace) {
+            itemsLong.add(place.getPlaceAddr());
+            itemsShort.add(place.getPlaceAddr().substring(0,12));
+        }
+        spinner.setAdapter(new ArrayAdapter<String>(this,
+                android.R.layout.simple_list_item_1,
+                itemsShort)); // set the adapter
+
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.menu_map, menu);
         super.onCreateOptionsMenu(menu);
-
         MenuItem item = menu.findItem(R.id.spinner);
         Spinner spinner = (Spinner) MenuItemCompat.getActionView(item);
-        spinner.setAdapter(new ArrayAdapter<String>(this,
-                android.R.layout.simple_list_item_1,
-                items)); // set the adapter
-
-        MenuItem itemSearch = menu.findItem(R.id. action_search);
-        txtSearchValue = (SearchView) MenuItemCompat.getActionView(itemSearch);
-        // set searchView listener (look for text changes, and submit event)
-        txtSearchValue.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
+        //Load items
+        loadItemsForSpinner(spinner);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
-            public boolean onQueryTextSubmit(String query) {
-                Toast. makeText(getApplicationContext(), "1-SUBMIT..." + query,
-                        Toast. LENGTH_SHORT).show();
-                // recreate the 'original' ActionBar (collapse the SearchBox)
-                invalidateOptionsMenu();
-                // clear searchView text
-                txtSearchValue.setQuery("", false);
-                return false;
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                CheckedPlace checkedPlace = checkedPlaceDAO.getCheckedPlace(itemsLong.get(position));
+                moveCameraTo(checkedPlace.getLatitude(),checkedPlace.getLongitude());
+                destination = new LatLng(checkedPlace.getLatitude(),checkedPlace.getLongitude());
             }
+
             @Override
-            public boolean onQueryTextChange(String newText) {
-            // accept input one character at the time
-                return true;
+            public void onNothingSelected(AdapterView<?> parent) {
+
             }
         });
+
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
 // user clicked a menu-item from ActionBar
-// perform SEARCH operations...
         switch (item.getItemId()){
             case R.id.action_camera: {
                 cameraAct();
                 return true;
             }//Camera
-            case R.id.action_search:{
-
+            case R.id.action_search: {
+                placeAutoCompleteAct();
+                return true;
+            }//AutoComplete
+            case R.id.action_share: {
+                //Direction
+                requestDirection();
                 return true;
             }
         }
@@ -295,73 +410,294 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == CAMERA_REQUEST && resultCode == Activity.RESULT_OK) {
-            Bitmap photo = (Bitmap) data.getExtras().get("data");
-//            imageSelected.setImageBitmap(Bitmap.createScaledBitmap(
-//                    photo,
-//                    imageSelected.getWidth(),
-//                    imageSelected.getHeight(),
-//                    false));
-            saveImage(photo);
-            loadPic();
+        if (requestCode == CAMERA_REQUEST) {
+            if(resultCode == Activity.RESULT_OK) {
+                cameraAction.handleBigCameraPhoto(this);
+                loadListPlaceMarked();
+            }
+            else if(resultCode == RESULT_CANCELED) {
+                cameraAction.deleteFile();
+            }
         }
-    }//Camera load imageselected and save/load images
+        else
+        if (requestCode == PLACE_AUTOCOMPLETE_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+                Place place = PlaceAutocomplete.getPlace(this, data);
+                moveCameraToPlace(place);
+                destination = place.getLatLng();
+                Log.i(TAG, "Place: " + place.getName());
 
-    private void loadPic() {
-        thumbnails = loadImages();
-        loadSlidePanel();
+            } else if (resultCode == PlaceAutocomplete.RESULT_ERROR) {
+                Status status = PlaceAutocomplete.getStatus(this, data);
+                // TODO: Handle the error.
+                Log.i(TAG, status.getStatusMessage());
+
+            } else if (resultCode == RESULT_CANCELED) {
+                // The user canceled the operation.
+            }
+        }
     }
 
-    private void cameraAct(){
-        Intent cameraIntent = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
-        startActivityForResult(cameraIntent, CAMERA_REQUEST);
-    }//Camera
+    private void moveCameraToPlace(Place place) {
+        LatLng latLng = place.getLatLng();
+        final CharSequence name = place.getName();
+        // tạo marker trên map
+        MarkerOptions optionX=new MarkerOptions();
+        optionX.position(latLng);
+        optionX.title(name.toString());
 
-    private void saveImage(Bitmap finalBitmap) {
+        //optionX.title();
+        optionX.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_VIOLET));
+        Marker curMarker = mMap.addMarker(optionX);
+        // chuyển camera đến marker vừa được chọn
+        CameraPosition cameraPos = new CameraPosition.Builder()
+                .target(latLng)      // Sets the center of the map to location user
+                .zoom(15)                   // Sets the zoom
+                .bearing(90)                // Sets the orientation of the camera to east
+                .tilt(40)                   // Sets the tilt of the camera to 30 degrees
+                .build();                   // Creates a CameraPosition from the builder
+        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos));
+        curMarker.showInfoWindow();
 
-        File myDir = new File(pathAlbum);
-        myDir.mkdirs();
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        Random generator = new Random();
-        int n = 10000;
-        n = generator.nextInt(n);
-        String fname = "Image-"+ n +timeStamp +".jpg";
-        File file = new File (myDir, fname);
-        if (file.exists ()) file.delete ();
+    }
+
+    private Address getAddrCurrentLocation(double latitide, double longitude) {
+        Address myAddress = null;
         try {
-            FileOutputStream out = new FileOutputStream(file);
-            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out);
-            out.flush();
-            out.close();
+            List<Address> addresses = geocoder.getFromLocation(latitide, longitude, 1);
 
-        } catch (Exception e) {
+            if(addresses != null) {
+                Address returnedAddress = addresses.get(0);
+                myAddress = returnedAddress;
+            }
+            else {
+                //Do sth
+            }
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
             e.printStackTrace();
-        }
-    }//Camera
-
-    private Bitmap[] loadImages() {
-        File path = new File(pathAlbum);
-        String[] fileNames = null;
-        if(path.exists())
-        {
-            fileNames = path.list();
-        }
-        else {//thoat
             return null;
         }
-        Bitmap[] bitmaps = new Bitmap[fileNames.length];
-        for(int i = 0; i < fileNames.length; i++)
-        {
-            Bitmap mBitmap = BitmapFactory.decodeFile(pathAlbum+"/"+ fileNames[i]);
-            bitmaps[i] = mBitmap;
-            ///Now set this bitmap on imageview
+        return myAddress;
+    }
+
+    private void moveCameraTo(double latitude,double longitude) {
+            LatLng latLng = new LatLng(latitude, longitude);
+            //Move camera to pos
+            CameraPosition cameraPosition = new CameraPosition.Builder()
+                    .target(latLng)      // Sets the center of the map to location user
+                    .zoom(15)                   // Sets the zoom
+                    .bearing(90)                // Sets the orientation of the camera to east
+                    .tilt(40)                   // Sets the tilt of the camera to 30 degrees
+                    .build();                   // Creates a CameraPosition from the builder
+            mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+    }
+
+    private void markLocation(CheckedPlace checkedPlace) {
+        //Get addr
+        LatLng latLng=new LatLng(checkedPlace.getLatitude(), checkedPlace.getLongitude());
+        Address addr = getAddrCurrentLocation(checkedPlace.getLatitude(),checkedPlace.getLongitude());
+
+        MarkerOptions option=new MarkerOptions();
+        String name = checkedPlace.getPlaceAddr();
+        String diaChi = "";
+        for(int i=1;i<addr.getMaxAddressLineIndex();i++) {
+            diaChi += addr.getAddressLine(i);
+            if(i < addr.getMaxAddressLineIndex()-1) {
+                diaChi+=", ";
+            }
         }
-        return bitmaps;
+        option.title(name);
+        option.snippet(diaChi);
+        option.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_YELLOW));
+        option.position(latLng);
+        Marker currentMarker= mMap.addMarker(option);
+        currentMarker.showInfoWindow();
+    }
 
-    }//Camera
+    private void updateMyCurrentLoc(Location location) {
+        if (location != null) {
+            //Get addr
+            Address addr = getAddrCurrentLocation(location.getLatitude(),location.getLongitude());
+            if(addr == null) return;
+            String name = addr.getAddressLine(0);
+            moveCameraTo(location.getLatitude(),location.getLongitude());
+            curPlace = name;
+            curAddr = addr;
+        }
 
-//    private void cameraAct(){
-//        Intent intent = new Intent(this,PhotoIntentActivity.class);
-//        startActivity(intent);
-//    }
+    }
+
+    public boolean checkStatus() {
+        ConnectivityManager cm =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo netInfo = cm.getActiveNetworkInfo();
+        return netInfo != null && netInfo.isConnected();
+    }
+
+    public Location getLocation() {
+        Snackbar.make(textNamePlace,"Getting location...", Snackbar.LENGTH_SHORT).show();
+        Location location = null;
+        try {
+            locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+
+            // getting GPS status
+            boolean isGPSEnabled = locationManager
+                    .isProviderEnabled(LocationManager.GPS_PROVIDER);
+
+            // getting network status
+            boolean isNetworkEnabled = locationManager
+                    .isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                    && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                // no network provider is enabled
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.ACCESS_COARSE_LOCATION,
+                                Manifest.permission.ACCESS_FINE_LOCATION},
+                        MY_PERMISSION_LOCATION);
+
+            } else {
+                //this.canGetLocation = true;
+                if (isNetworkEnabled) {
+
+                        locationManager.requestLocationUpdates(
+                                LocationManager.NETWORK_PROVIDER,
+                                LOCATION_UPDATE_MIN_TIME,
+                                LOCATION_UPDATE_MIN_DISTANCE,
+                                locationListener);
+
+                    }
+                    if (locationManager != null) {
+                        location = locationManager
+                                .getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+
+
+                        if (location != null) {
+                            updateMyCurrentLoc(location);
+                            origin = new LatLng(location.getLatitude(),location.getLongitude());
+                            return location;
+                        }
+                    }
+                }
+                // if GPS Enabled get lat/long using GPS Services
+                if (isGPSEnabled) {
+                    if(location == null) {
+
+                            locationManager.requestLocationUpdates(
+                                    LocationManager.GPS_PROVIDER,
+                                    LOCATION_UPDATE_MIN_TIME,
+                                    LOCATION_UPDATE_MIN_DISTANCE,
+                                    locationListener);
+
+                        if (locationManager != null) {
+                            location = locationManager
+                                    .getLastKnownLocation(LocationManager.GPS_PROVIDER);
+
+                            if (location != null) {
+                                updateMyCurrentLoc(location);
+                                origin = new LatLng(location.getLatitude(),location.getLongitude());
+                                return location;
+                            }
+                        }
+                    }
+                }
+                //if(location == null) {
+                 //   Snackbar.make(textNamePlace,"Location cannot be founddd", Snackbar.LENGTH_SHORT).show();
+
+                //}
+
+
+        } catch (Exception e) {
+            Snackbar.make(textNamePlace,"Location cannot be found", Snackbar.LENGTH_SHORT).show();
+            e.printStackTrace();
+        }
+        return location;
+    }
+
+    private void placeAutoCompleteAct() {
+        Intent intent =null;
+        try {
+            intent = new PlaceAutocomplete.IntentBuilder(PlaceAutocomplete.MODE_FULLSCREEN)
+                    .build(this);
+            startActivityForResult(intent, PLACE_AUTOCOMPLETE_REQUEST_CODE);
+        } catch (GooglePlayServicesRepairableException e) {
+            e.printStackTrace();
+        } catch (GooglePlayServicesNotAvailableException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void loadPic(final int idAddr) {
+        thumbnails = null;
+        thumbnails = cameraAction.loadImages(idAddr);
+    }
+
+    //Camera
+    private void cameraAct(){
+        if(!checkStatus()) {
+            return;
+        }
+        //getLocation();
+        Intent cameraIntent = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+        cameraAction = new CameraAction(curPlace,curAddr,checkedPlaceDAO);
+        cameraAction.makeFile(cameraIntent);
+        startActivityForResult(cameraIntent, CAMERA_REQUEST);
+    }
+
+
+    public void loadListPlaceMarked() {
+        //load dbs
+        final List<CheckedPlace> list = checkedPlaceDAO.getAllCheckedPlace();
+                for(final CheckedPlace checkedPlace:list) {
+                    markLocation(checkedPlace);
+                }
+
+    }
+
+    //Direction
+    public void requestDirection() {
+
+        if(!checkStatus()) {
+            return;
+        }
+        if(polyline != null)
+            polyline.remove();
+        Location location = mMap.getMyLocation();
+        origin = new LatLng(location.getLatitude(),location.getLongitude());
+        if(origin == null) {
+            Snackbar.make(textNamePlace,"There is no current place",Toast.LENGTH_SHORT);
+        }
+        else
+        if(destination == null) {
+            Snackbar.make(textNamePlace,"There is no destination place",Toast.LENGTH_SHORT);
+        }
+        else {
+            Snackbar.make(textNamePlace,"Direction Requesting...", Snackbar.LENGTH_SHORT).show();
+            GoogleDirection.withServerKey(getString(R.string.server_key))
+                    .from(origin)
+                    .to(destination)
+                    .transportMode(TransportMode.DRIVING)
+                    .execute(this);
+
+        }
+    }
+
+    @Override
+    public void onDirectionSuccess(Direction direction, String rawBody) {
+        Snackbar.make(textNamePlace,"Success with status : " + direction.getStatus(), Snackbar.LENGTH_SHORT).show();
+        if (direction.isOK()) {
+//            mMap.addMarker(new MarkerOptions().position(destination)
+//                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_YELLOW))
+//            );
+            ArrayList<LatLng> directionPositionList = direction.getRouteList().get(0).getLegList().get(0).getDirectionPoint();
+            polyline = mMap.addPolyline(DirectionConverter.createPolyline(this, directionPositionList, 5, Color.RED));
+        }
+    }
+
+    @Override
+    public void onDirectionFailure(Throwable t) {
+        Snackbar.make(textNamePlace,"Direction cannot be found", Snackbar.LENGTH_SHORT).show();
+    }
+
 }
