@@ -2,10 +2,14 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/GoNCheck-master.iml" filepath="$PROJECT_DIR$/GoNCheck-master.iml" />
+      <module fileurl="file://$PROJECT_DIR$/GoNCheck.iml" filepath="$PROJECT_DIR$/GoNCheck.iml" />
+      <module fileurl="file://D:\HCMUS\GoNCheck\GoNCheck-master.iml" filepath="D:\HCMUS\GoNCheck\GoNCheck-master.iml" />
       <module fileurl="file://$PROJECT_DIR$/app/app.iml" filepath="$PROJECT_DIR$/app/app.iml" />
+      <module fileurl="file://D:\HCMUS\GoNCheck\app\app.iml" filepath="D:\HCMUS\GoNCheck\app\app.iml" />
       <module fileurl="file://$PROJECT_DIR$/directionlibrary/directionlibrary.iml" filepath="$PROJECT_DIR$/directionlibrary/directionlibrary.iml" />
+      <module fileurl="file://D:\HCMUS\GoNCheck\directionlibrary\directionlibrary.iml" filepath="D:\HCMUS\GoNCheck\directionlibrary\directionlibrary.iml" />
       <module fileurl="file://$PROJECT_DIR$/library/library.iml" filepath="$PROJECT_DIR$/library/library.iml" />
+      <module fileurl="file://D:\HCMUS\GoNCheck\library\library.iml" filepath="D:\HCMUS\GoNCheck\library\library.iml" />
     </modules>
   </component>
 </project>
