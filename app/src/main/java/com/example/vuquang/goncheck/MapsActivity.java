@@ -17,7 +17,9 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.os.Build;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.view.MenuItemCompat;
@@ -64,11 +66,12 @@ import java.util.Locale;
 
 import io.realm.Realm;
 
-public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback,DirectionCallback{
+public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback, DirectionCallback {
     private static final String TAG = "GoNCheck";
 
     private static final int PLACE_AUTOCOMPLETE_REQUEST_CODE = 1889;
     private static final int CAMERA_REQUEST = 1888;
+    private static final int LOCATION_REQUEST = 2000;
     private static final int S_WIDTH = 120;
     private static final int S_HEIGHT = 120;
     private static final int B_WIDTH = 600;
@@ -76,6 +79,8 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     public static final int LOCATION_UPDATE_MIN_DISTANCE = 10;
     public static final int LOCATION_UPDATE_MIN_TIME = 5000;
+
+    private static final String[] LOCATION_PERMS = {Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
 
     //Spinner items
     List<String> itemsShort;
@@ -102,22 +107,30 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     Bitmap[] thumbnails = null;
     CameraAction cameraAction;
 
+    Location location = null;
+
     //Direction
     private LatLng origin;
     private LatLng destination;
     Polyline polyline;
 
+    int version = 0;
+
     private final LocationListener locationListener = new LocationListener() {
         public void onLocationChanged(Location location) {
+            //locationManager.removeUpdates(locationListener);
+            getLocation();
+        }
+
+        public void onProviderDisabled(String provider) {
             locationManager.removeUpdates(locationListener);
         }
 
-        public void onProviderDisabled(String provider){
-            locationManager.removeUpdates(locationListener);
+        public void onProviderEnabled(String provider) {
         }
 
-        public void onProviderEnabled(String provider){ }
-        public void onStatusChanged(String provider, int status,Bundle extras){ }
+        public void onStatusChanged(String provider, int status, Bundle extras) {
+        }
     };
 
     @Override
@@ -134,7 +147,9 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         //Create realm db
         Realm.init(this);
         checkedPlaceDAO = new CheckedPlaceDAO();
-        cameraAction = new CameraAction(curPlace,curAddr,checkedPlaceDAO);
+        cameraAction = new CameraAction(curPlace, curAddr, checkedPlaceDAO);
+
+        version = Build.VERSION.SDK_INT;
 
         //Add PlaceAutoComplete
         PlaceAutocompleteFragment autocompleteFragment = (PlaceAutocompleteFragment)
@@ -159,9 +174,9 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         textNamePlace = (TextView) findViewById(R.id.name);
 
-        imageSelected = (ImageView) findViewById(R.id. imageSelected);
+        imageSelected = (ImageView) findViewById(R.id.imageSelected);
 
-        scrollViewgroup = (ViewGroup) findViewById(R.id. viewgroup);
+        scrollViewgroup = (ViewGroup) findViewById(R.id.viewgroup);
 
         mLayout = (SlidingUpPanelLayout) findViewById(R.id.sliding_layout);
         mLayout.addPanelSlideListener(new PanelSlideListener() {
@@ -184,13 +199,13 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     }
 
-    private void loadSlidePanel(){
+    private void loadSlidePanel() {
         if (thumbnails != null) {
             scrollViewgroup.removeAllViews();
 
             //Set big view for first image
-            if(thumbnails[0] != null)
-            showLargeImage(0);
+            if (thumbnails[0] != null)
+                showLargeImage(0);
 
             for (int i = 0; i < thumbnails.length; i++) {
                 //create single frames [icon] using XML inflater
@@ -241,10 +256,10 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         Bitmap image = thumbnails[id];
         ImageView imageView = new ImageView(this);
 
-        if(image.getHeight() < image.getWidth()) {
+        if (image.getHeight() < image.getWidth()) {
             Matrix matrix = new Matrix();
             matrix.postRotate(90f);
-            image = Bitmap.createBitmap(image , 0, 0,
+            image = Bitmap.createBitmap(image, 0, 0,
                     image.getWidth(),
                     image.getHeight(),
                     matrix,
@@ -270,7 +285,8 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
      */
     @Override
     public void onMapReady(GoogleMap googleMap) {
-        Snackbar.make(textNamePlace,"Loading map...", Snackbar.LENGTH_SHORT).show();
+
+        Snackbar.make(textNamePlace, "Loading map...", Snackbar.LENGTH_SHORT).show();
         mMap = googleMap;
         int googlePlayStatus = GooglePlayServicesUtil.isGooglePlayServicesAvailable(this);
         if (googlePlayStatus != ConnectionResult.SUCCESS) {
@@ -278,9 +294,11 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             finish();
         } else {
             if (mMap != null) {
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                if (version > Build.VERSION_CODES.M &&
+                        ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
                         && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                     // no network provider is enabled
+                    requestPermissions(LOCATION_PERMS, LOCATION_REQUEST);
                 } else {
                     mMap.setMyLocationEnabled(true);
                     mMap.setOnMyLocationButtonClickListener(new GoogleMap.OnMyLocationButtonClickListener() {
@@ -293,6 +311,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 }
                 mMap.getUiSettings().setMyLocationButtonEnabled(true);
                 mMap.getUiSettings().setAllGesturesEnabled(true);
+                getLocation();
             }
         }
         //click marker event
@@ -301,7 +320,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             public boolean onMarkerClick(Marker marker) {
                 String title = marker.getTitle();
                 textNamePlace.setText(title);
-                if(checkedPlaceDAO.getCheckedPlace(title)!= null) {
+                if (checkedPlaceDAO.getCheckedPlace(title) != null) {
                     loadPic(checkedPlaceDAO.getCheckedPlace(title).getId());
                     loadSlidePanel();
                 }
@@ -311,23 +330,55 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 return true;
             }
         });
-        loadListPlaceMarked();
-        getLocation();
+ //       loadListPlaceMarked();
+
     }
 
     //Load items
-    private void loadItemsForSpinner(Spinner spinner){
+    private void loadItemsForSpinner(Spinner spinner) {
         List<CheckedPlace> listPlace = checkedPlaceDAO.getAllCheckedPlace();
         itemsLong = new ArrayList<>();
         itemsShort = new ArrayList<>();
-        for(CheckedPlace place:listPlace) {
+        for (CheckedPlace place : listPlace) {
             itemsLong.add(place.getPlaceAddr());
-            itemsShort.add(place.getPlaceAddr().substring(0,12));
+            itemsShort.add(place.getPlaceAddr().substring(0, 12));
         }
         spinner.setAdapter(new ArrayAdapter<String>(this,
                 android.R.layout.simple_list_item_1,
                 itemsShort)); // set the adapter
 
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        switch (requestCode) {
+            case LOCATION_REQUEST:
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                        mMap.setMyLocationEnabled(true);
+                        mMap.setOnMyLocationButtonClickListener(new GoogleMap.OnMyLocationButtonClickListener() {
+                            @Override
+                            public boolean onMyLocationButtonClick() {
+                                getLocation();
+                                return true;
+                            }
+                        });
+                    }else {
+                        if (ActivityCompat.shouldShowRequestPermissionRationale(this,
+                                Manifest.permission.ACCESS_COARSE_LOCATION)) {
+
+                            ActivityCompat.requestPermissions(this,
+                                    LOCATION_PERMS,
+                                    LOCATION_REQUEST);
+
+                        }
+                    }
+
+                }
+                break;
+        }
     }
 
     @Override
@@ -515,7 +566,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     public Location getLocation() {
         Snackbar.make(textNamePlace,"Getting location...", Snackbar.LENGTH_SHORT).show();
-        Location location = null;
+        //Location location = null;
         try {
             locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
 
@@ -530,9 +581,9 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
                     && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 // no network provider is enabled
-                Log.e(TAG, "It's failed");
+                Log.e(TAG, "No permission");
 
-            } else {
+            } else { // we have permission to get location
                 //this.canGetLocation = true;
                 if (isNetworkEnabled) {
 
@@ -545,18 +596,13 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                     if (locationManager != null) {
                         location = locationManager
                                 .getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-                        if(locationManager
-                                .getLastKnownLocation(LocationManager.NETWORK_PROVIDER)!=null)
-                        {
-                            Snackbar.make(textNamePlace,"Null oi 1", Snackbar.LENGTH_SHORT).show();
-                        }
 
+                            if (location != null) {
+                                updateMyCurrentLoc(location);
+                                origin = new LatLng(location.getLatitude(),location.getLongitude());
+                                return location;
+                            }
 
-                        if (location != null) {
-                            updateMyCurrentLoc(location);
-                            origin = new LatLng(location.getLatitude(),location.getLongitude());
-                            return location;
-                        }
                     }
                 }
                 // if GPS Enabled get lat/long using GPS Services
@@ -571,11 +617,6 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                         if (locationManager != null) {
                             location = locationManager
                                     .getLastKnownLocation(LocationManager.GPS_PROVIDER);
-                            if(locationManager
-                                    .getLastKnownLocation(LocationManager.NETWORK_PROVIDER)!=null)
-                            {
-                                Snackbar.make(textNamePlace,"Null oi 2", Snackbar.LENGTH_SHORT).show();
-                            }
                             if (location != null) {
                                 updateMyCurrentLoc(location);
                                 origin = new LatLng(location.getLatitude(),location.getLongitude());
@@ -584,10 +625,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                         }
                     }
                 }
-                //if(location == null) {
-                 //   Snackbar.make(textNamePlace,"Location cannot be founddd", Snackbar.LENGTH_SHORT).show();
 
-                //}
             }
 
         } catch (Exception e) {
@@ -621,6 +659,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             return;
         }
         getLocation();
+
         Intent cameraIntent = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
         cameraAction = new CameraAction(curPlace,curAddr,checkedPlaceDAO);
         cameraAction.makeFile(cameraIntent);
